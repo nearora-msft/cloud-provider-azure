@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/services/compute/mgmt/2020-12-01/compute"
+	"github.com/Azure/azure-sdk-for-go/services/network/mgmt/2021-02-01/network"
 	"github.com/Azure/azure-sdk-for-go/services/storage/mgmt/2021-02-01/storage"
 	"github.com/Azure/go-autorest/autorest/to"
 
@@ -39,6 +40,7 @@ type AccountOptions struct {
 	// indicate whether create new account when Name is empty
 	EnableHTTPSTrafficOnly                  bool
 	CreateAccount                           bool
+	CreatePrivateEndpoint                   bool
 	EnableLargeFileShare                    bool
 	DisableFileServiceDeleteRetentionPolicy bool
 	IsHnsEnabled                            *bool
@@ -262,6 +264,15 @@ func (az *Cloud) EnsureStorageAccount(accountOptions *AccountOptions, genAccount
 					return "", "", err
 				}
 			}
+
+			if accountOptions.CreatePrivateEndpoint {
+				storageAccount, rerr := az.StorageAccountClient.GetProperties(ctx, az.ResourceGroup, accountName)
+				if rerr != nil {
+					return "", "", fmt.Errorf("Failed to retrieve storage  account properties", rerr)
+				}
+				klog.V(2).Infof("Retrieved storage account successfully, now creating private endpoint")
+				CreatePrivateEndpoint(az, storageAccount.ID)
+			}
 		}
 	}
 
@@ -272,6 +283,38 @@ func (az *Cloud) EnsureStorageAccount(accountOptions *AccountOptions, genAccount
 	}
 
 	return accountName, accountKey, nil
+}
+
+func CreatePrivateEndpoint(az *Cloud, resourceId *string) *retry.Error {
+	klog.V(2).Infof("Create private endpoint client")
+	privateEndpointClient := network.NewPrivateEndpointsClient(az.subscriptionID)
+	klog.V(2).Infof("Created private endpoint client successfully")
+	ctx, cancel := getContextWithCancel()
+	defer cancel()
+
+	klog.V(2).Infof("Get subnet")
+	subnet, err := az.SubnetsClient.Get(ctx, az.resourceGroup, az.cloud.VnetName, az.cloud.SubnetName, "")
+	if err != nil {
+		fmt.Errorf("could not get subnet for the given resourcegroup and vnet for storage account", err)
+	}
+	klog.V(2).Infof("Retrieved subnet successfully now create private endpoint")
+
+	privateEndpointProperties := &network.PrivateEndpointProperties{Subnet: &subnet}
+
+	privateEndpoint := network.PrivateEndpoint{
+		ID:                        resourceId,
+		Location:                  &az.location,
+		PrivateEndpointProperties: privateEndpointProperties,
+	}
+
+	_, rerr := privateEndpointClient.CreateOrUpdate(ctx, az.resourceGroup, "TestEndpoint", privateEndpoint)
+
+	if rerr != nil {
+		fmt.Errorf("Error occured while creating private endpoint", rerr)
+	}
+
+	klog.V(2).Infof("Private endpoint created successfully")
+	return nil
 }
 
 // AddStorageAccountTags add tags to storage account
