@@ -50,6 +50,9 @@ import (
 	"sigs.k8s.io/cloud-provider-azure/pkg/azureclients/fileclient"
 	"sigs.k8s.io/cloud-provider-azure/pkg/azureclients/interfaceclient"
 	"sigs.k8s.io/cloud-provider-azure/pkg/azureclients/loadbalancerclient"
+	"sigs.k8s.io/cloud-provider-azure/pkg/azureclients/privatednsclient"
+	"sigs.k8s.io/cloud-provider-azure/pkg/azureclients/privatednszonegroupclient"
+	"sigs.k8s.io/cloud-provider-azure/pkg/azureclients/privateendpointclient"
 	"sigs.k8s.io/cloud-provider-azure/pkg/azureclients/publicipclient"
 	"sigs.k8s.io/cloud-provider-azure/pkg/azureclients/routeclient"
 	"sigs.k8s.io/cloud-provider-azure/pkg/azureclients/routetableclient"
@@ -57,6 +60,7 @@ import (
 	"sigs.k8s.io/cloud-provider-azure/pkg/azureclients/snapshotclient"
 	"sigs.k8s.io/cloud-provider-azure/pkg/azureclients/storageaccountclient"
 	"sigs.k8s.io/cloud-provider-azure/pkg/azureclients/subnetclient"
+	"sigs.k8s.io/cloud-provider-azure/pkg/azureclients/virtualnetworklinksclient"
 	"sigs.k8s.io/cloud-provider-azure/pkg/azureclients/vmasclient"
 	"sigs.k8s.io/cloud-provider-azure/pkg/azureclients/vmclient"
 	"sigs.k8s.io/cloud-provider-azure/pkg/azureclients/vmsizeclient"
@@ -266,6 +270,10 @@ type Cloud struct {
 	VirtualMachineSizesClient       vmsizeclient.Interface
 	AvailabilitySetsClient          vmasclient.Interface
 	ZoneClient                      zoneclient.Interface
+	privateendpointclient           privateendpointclient.Interface
+	privatednsclient                privatednsclient.Interface
+	privatednszonegroupclient       privatednszonegroupclient.Interface
+	virtualNetworkLinksClient       virtualnetworklinksclient.Interface
 
 	ResourceRequestBackoff wait.Backoff
 	metadata               *InstanceMetadataService
@@ -341,27 +349,7 @@ func NewCloud(configReader io.Reader, callFromCCM bool) (cloudprovider.Interface
 }
 
 func NewCloudFromConfigFile(configFilePath string, calFromCCM bool) (cloudprovider.Interface, error) {
-	var (
-		cloud cloudprovider.Interface
-		err   error
-	)
-
-	if configFilePath != "" {
-		var config *os.File
-		config, err = os.Open(configFilePath)
-		if err != nil {
-			klog.Fatalf("Couldn't open cloud provider configuration %s: %#v",
-				configFilePath, err)
-		}
-
-		defer config.Close()
-		cloud, err = NewCloud(config, calFromCCM)
-	} else {
-		// Pass explicit nil so plugins can actually check for nil. See
 		// "Why is my nil error value not equal to nil?" in golang.org/doc/faq.
-		cloud, err = NewCloud(nil, false)
-	}
-
 	if err != nil {
 		return nil, fmt.Errorf("could not init cloud provider azure: %v", err)
 	}
@@ -428,12 +416,8 @@ func NewCloudWithoutFeatureGates(configReader io.Reader, callFromCCM bool) (*Clo
 		unmanagedNodes:     sets.NewString(),
 		routeCIDRs:         map[string]string{},
 	}
-
 	err = az.InitializeCloudFromConfig(config, false, callFromCCM)
 	if err != nil {
-		return nil, err
-	}
-
 	return az, nil
 }
 
@@ -753,6 +737,10 @@ func (az *Cloud) configAzureClients(
 	az.PublicIPAddressesClient = publicipclient.New(publicIPClientConfig)
 	az.FileClient = fileclient.New(fileClientConfig)
 	az.AvailabilitySetsClient = vmasclient.New(vmasClientConfig)
+	az.privateendpointclient = privateendpointclient.New(azClientConfig)
+	az.privatednsclient = privatednsclient.New(azClientConfig)
+	az.privatednszonegroupclient = privatednszonegroupclient.New(azClientConfig)
+	az.virtualNetworkLinksClient = virtualnetworklinksclient.New(azClientConfig)
 
 	if az.ZoneClient == nil {
 		az.ZoneClient = zoneclient.New(zoneClientConfig)
